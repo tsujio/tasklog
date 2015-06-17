@@ -53,9 +53,12 @@ sub str2datetime {
   # Use current date if date string not given
   if (not $date) {
     my $dt = DateTime->now(time_zone => $TIME_ZONE);
-    $dt->set_hour($hour);
-    $dt->set_minute($min);
-    $dt->set_second($sec);
+    eval {
+      $dt->set_hour($hour);
+      $dt->set_minute($min);
+      $dt->set_second($sec);
+    };
+    die "Invalid time string format." if $@;
     $dt->set_time_zone('UTC');
     return sprintf 'datetime("%s")', $dt->strftime($DATETIME_FORMAT);
   }
@@ -64,10 +67,13 @@ sub str2datetime {
   if ($date !~ /^(\d{4})-(\d{2})-(\d{2})$/) {
     die "Invalid date string format.";
   }
-  my $dt = DateTime->new(
-    time_zone => $TIME_ZONE,
-    year => $1, month => $2, day => $3,
-    hour => $hour, minute => $min, second => $sec);
+  my $dt = eval {
+    DateTime->new(
+      time_zone => $TIME_ZONE,
+      year => $1, month => $2, day => $3,
+      hour => $hour, minute => $min, second => $sec)
+  };
+  die "Invalid datetime string format." if $@;
   $dt->set_time_zone('UTC');
   return sprintf 'datetime("%s")', $dt->strftime($DATETIME_FORMAT);
 }
