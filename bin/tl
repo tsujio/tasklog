@@ -1,0 +1,2 @@
+#!/bin/bash
+perl $(cd $(dirname $0); pwd)/../main.pl $@
