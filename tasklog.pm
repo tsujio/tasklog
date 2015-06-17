@@ -100,6 +100,24 @@ sub invoke_with_connection {
   $dbh->disconnect;
 }
 
+# Check if given task exists or not
+sub task_exists {
+  my $dbh = shift;
+  my $task_name = shift;
+  my $sth = $dbh->prepare('SELECT * FROM tasks WHERE name = ?');
+  $sth->execute($task_name);
+  $sth->fetchrow_hashref
+}
+
+# Check if logs of given task exist
+sub task_log_exists {
+  my $dbh = shift;
+  my $task_name = shift;
+  my $sth = $dbh->prepare('SELECT * FROM logs WHERE task_name = ?');
+  $sth->execute($task_name);
+  $sth->fetchrow_hashref
+}
+
 # Execute start command
 sub execute_start {
   my $task_name = shift;
@@ -111,6 +129,9 @@ sub execute_start {
 
   invoke_with_connection sub {
     my $dbh = shift;
+
+    # Verify that task to start exists
+    die "Task $task_name not found." unless task_exists($dbh, $task_name);
 
     # Raise error if active tasks exist
     my $cnt = $dbh->selectall_arrayref(
@@ -156,6 +177,9 @@ sub execute_switch {
 
   invoke_with_connection sub {
     my $dbh = shift;
+
+    # Verify that task to start exists
+    die "Task $task_name not found." unless task_exists($dbh, $task_name);
 
     # Raise error if multiple active tasks exist
     my $active_tasks = $dbh->selectall_arrayref(
@@ -217,6 +241,7 @@ sub execute_task {
     # Add task
     invoke_with_connection sub {
       my $dbh = shift;
+      die "Task $task_name already exists." if task_exists($dbh, $task_name);
       my $sth = $dbh->prepare('INSERT INTO tasks(name) VALUES(?);');
       $sth->execute($task_name);
       say "Added new task: $task_name";
@@ -225,6 +250,9 @@ sub execute_task {
     # Remove task
     invoke_with_connection sub {
       my $dbh = shift;
+      die "Task $task_name not found." unless task_exists($dbh, $task_name);
+      die "Cannot delete task $task_name because some logs have been recorded."
+        if task_log_exists($dbh, $task_name);
       my $sth = $dbh->prepare('DELETE FROM tasks WHERE name = ?');
       $sth->execute($task_name);
       say "Removed task: $task_name";
