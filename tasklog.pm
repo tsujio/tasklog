@@ -74,8 +74,15 @@ sub str2datetime {
 
 # Invoke given function with DB connection
 sub invoke_with_connection {
-  my $readonly = @_ > 1;
-  my $func = $readonly ? $_[1] : $_[0];
+  my ($opt, $func) = @_ > 1 ? ($_[0], $_[1]) : ('', $_[0]);
+  my ($readonly, $create) = map { $_ eq $opt } ('readonly', 'create');
+
+  # Check if DB file exists or not
+  if ($create) {
+    die "DB file $db_file_path already exists." if -e $db_file_path;
+  } else {
+    die "DB file $db_file_path not found." unless -e $db_file_path;
+  }
 
   my $dbh = DBI->connect("dbi:SQLite:dbname=$db_file_path", undef, undef,
                          { RaiseError => 1, AutoCommit => 0 });
@@ -244,7 +251,7 @@ sub execute_db {
 
   if ($arg eq 'setup') {
     # Setup DB
-    invoke_with_connection sub {
+    invoke_with_connection 'create', sub {
       my $dbh = shift;
       $dbh->do(<<SQL);
 CREATE TABLE logs (
