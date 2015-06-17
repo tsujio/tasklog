@@ -170,7 +170,8 @@ sub execute_end {
     die "Cannot determine which task to end." if @$active_tasks != 1;
 
     # End task
-    $dbh->do("UPDATE logs SET end_utc=$end_datetime WHERE end_utc = $DATETIME_INF;");
+    $dbh->do("UPDATE logs SET end_utc = $end_datetime " .
+               "WHERE end_utc = $DATETIME_INF;");
 
     say "Task $active_tasks->[0][0] ended.";
   };
@@ -193,7 +194,8 @@ sub execute_switch {
     die "Cannot determine which task to switch." if @$active_tasks != 1;
 
     # Switch task
-    $dbh->do("UPDATE logs SET end_utc=$DATETIME_NOW WHERE end_utc = $DATETIME_INF;");
+    $dbh->do("UPDATE logs SET end_utc = $DATETIME_NOW " .
+               "WHERE end_utc = $DATETIME_INF;");
     my $sth = $dbh->prepare("INSERT INTO logs(task_name, start_utc, end_utc) " .
                               "VALUES(?, $DATETIME_NOW, $DATETIME_INF);");
     $sth->execute($task_name);
