@@ -15,7 +15,8 @@ my $DB_FILENAME = 'tasklog.sqlite';
 my $TIME_ZONE = 'Asia/Tokyo';
 my $DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S';
 my $DATETIME_NOW = 'datetime("now")';
-my $DATETIME_INF = 'datetime("9999-01-01 00:00:00")';
+my $DATETIME_INF_STR = '9999-01-01 00:00:00';
+my $DATETIME_INF = "datetime('$DATETIME_INF_STR')";
 
 # Set DB file path
 my $script_dir = $FindBin::Bin;
@@ -229,7 +230,8 @@ sub execute_show {
       printf "%s\t%s\t%s\t%s\n",
         $row->{id}, $row->{task_name},
         $start_dt->strftime($DATETIME_FORMAT),
-        $end_dt->strftime($DATETIME_FORMAT);
+        $row->{end_utc} ne $DATETIME_INF_STR ?
+          $end_dt->strftime($DATETIME_FORMAT) : '';
     }
   };
 }
