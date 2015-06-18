@@ -45,10 +45,10 @@ sub str2datetime {
   }
 
   # Parse time string
-  if ($time !~ /^(\d{2}):(\d{2}):(\d{2})$/) {
+  if ($time !~ /^(\d{2}):(\d{2})(?::(\d{2}))?$/) {
     die "Invalid time string format.";
   }
-  my ($hour, $min, $sec) = ($1, $2, $3);
+  my ($hour, $min, $sec) = ($1, $2, $3 // '00');
 
   # Use current date if date string not given
   if (not $date) {
@@ -333,8 +333,8 @@ sub main {
     say <<EOS;
 
 COMMANDS:
-  start TASK [[yyyy-MM-dd] hh:mm:ss]
-  end [[yyyy-MM-dd] hh:mm:ss]
+  start TASK [[yyyy-MM-dd] hh:mm[:ss]]
+  end [[yyyy-MM-dd] hh:mm[:ss]]
   switch TASK       (alias: s)
   show
   task (add TASK| remove TASK| list)
