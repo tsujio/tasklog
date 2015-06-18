@@ -6,9 +6,12 @@ use warnings;
 
 use POSIX 'strftime';
 use DBI;
+use DateTime;
 
 use lib '../';
 use tasklog;
+
+my $now_utc = DateTime->now(time_zone => 'UTC');
 
 # Backup existing DB file
 my $backup_db_file_path = tasklog::get_db_file_path .
@@ -16,6 +19,53 @@ my $backup_db_file_path = tasklog::get_db_file_path .
 if (-e tasklog::get_db_file_path) {
   rename tasklog::get_db_file_path, $backup_db_file_path or die $!;
 }
+
+# Test str2stateid()
+is(tasklog::str2stateid('INITIAL'), 0, "Id of INITIAL should be 0");
+is(tasklog::str2stateid('SUSPENDED'), 1, "Id of SUSPENDED should be 1");
+is(tasklog::str2stateid('ACTIVE'), 2, "Id of ACTIVE should be 2");
+is(tasklog::str2stateid('BLOCKED'), 3, "Id of BLOCKED should be 3");
+is(tasklog::str2stateid('CLOSED'), 4, "Id of CLOSED should be 4");
+eval { tasklog::str2stateid() };
+like($@, qr/^Unexpected state string/, "Error message should be passed");
+eval { tasklog::str2stateid('UNKNOWN') };
+like($@, qr/^Unexpected state string/, "Error message should be passed");
+
+# Test stateid2str()
+is(tasklog::stateid2str(0), 'INITIAL', "String expr of state id should be INITIAL");
+is(tasklog::stateid2str(1), 'SUSPENDED', "String expr of state id should be SUSPENDED");
+is(tasklog::stateid2str(2), 'ACTIVE', "String expr of state id should be ACTIVE");
+is(tasklog::stateid2str(3), 'BLOCKED', "String expr of state id should be BLOCKED");
+is(tasklog::stateid2str(4), 'CLOSED', "String expr of state id should be CLOSED");
+eval { tasklog::stateid2str(5) };
+like($@, qr/^Unexpected state number./, "Error message should be passed");
+
+# Test contain()
+ok(tasklog::contain(['foo', 'bar', 'baz'], 'bar'), "Should recognize list contains given value");
+ok(!tasklog::contain(['foo', 'bar', 'baz'], 'barbar'), "Should recognize list does not contain given value");
+
+# Test str2datetime()
+is(tasklog::str2datetime('2015-06-19', '02:00:30'), 'datetime("2015-06-18 17:00:30")',
+   "Should return appropriate datetime string by UTC");
+is(tasklog::str2datetime('02:00:30'), sprintf('datetime("%s 17:00:30")', $now_utc->strftime('%Y-%m-%d')),
+   "Should return appropriate datetime string by UTC");
+is(tasklog::str2datetime('2015-06-19', '02:00'), 'datetime("2015-06-18 17:00:00")',
+   "Should return appropriate datetime string by UTC");
+is(tasklog::str2datetime('02:00'), sprintf('datetime("%s 17:00:00")', $now_utc->strftime('%Y-%m-%d')),
+   "Should return appropriate datetime string by UTC");
+is(tasklog::str2datetime(), 'datetime("now")',
+   "Should return appropriate datetime string by UTC");
+eval { tasklog::str2datetime('2015-06-19') };
+like($@, qr/^Invalid time string format/, "Error message should be passed");
+eval { tasklog::str2datetime('06-19') };
+like($@, qr/^Invalid time string format/, "Error message should be passed");
+eval { tasklog::str2datetime('2:00') };
+like($@, qr/^Invalid time string format/, "Error message should be passed");
+eval { tasklog::str2datetime('06-19', '02:00') };
+like($@, qr/^Invalid date string format/, "Error message should be passed");
+
+# Test utc2localtime()
+is(tasklog::utc2localtime('2015-06-18 17:00:30'), '2015-06-19 02:00:30', "Should be converted to localtime");
 
 # Test execute_db()
 ok(! -e tasklog::get_db_file_path, "db file should not exist");
