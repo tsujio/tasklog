@@ -140,6 +140,7 @@ sub invoke_with_connection {
   };
   if ($@) {
     $dbh->rollback unless $readonly;
+    $dbh->disconnect;
     die $@;
   }
   $dbh->disconnect;
