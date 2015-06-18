@@ -306,10 +306,11 @@ sub execute_show {
 sub execute_task {
   my $arg = shift;
   my $task_name = shift;
-  if (not $arg or not contain ['add', 'remove', 'list', 'history'], $arg) {
+  if (not $arg or
+      not contain ['add', 'remove', 'list', 'history', 'state'], $arg) {
     die "Unexpected args for 'task'";
   }
-  if (contain ['add', 'remove', 'history'], $arg and not $task_name) {
+  if (contain ['add', 'remove', 'history', 'state'], $arg and not $task_name) {
     die "Task name must be specified.";
   }
 
@@ -368,6 +369,16 @@ sub execute_task {
       $sth->execute($task_name);
       my $current_state = $sth->fetchrow_hashref()->{state};
       say sprintf "%s\t", stateid2str($current_state);
+    };
+  } elsif ($arg eq 'state') {
+    # Modify task state
+    my $state = shift;
+    die "Task state to set must be specified." unless $state;
+    my $datetime = str2datetime(@_);
+    invoke_with_connection sub {
+      my $dbh = shift;
+      switch_task_state($dbh, $task_name, $state, $datetime);
+      say "Switched state of task $task_name to $state.";
     };
   }
 }
@@ -441,7 +452,9 @@ COMMANDS:
   end [[yyyy-MM-dd] hh:mm[:ss]]
   switch TASK       (alias: s)
   show
-  task (add TASK | remove TASK | list | history TASK)
+  task (add | remove | history) TASK |
+       list |
+       state TASK STATE [[yyyy-MM-dd] hh:mm[:ss]]
   db (setup | desc)
   help
 EOS
