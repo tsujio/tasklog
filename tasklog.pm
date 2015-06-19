@@ -274,6 +274,9 @@ sub execute_switch {
     my $old_task = get_current_task($dbh);
     die "Cannot determine which task to switch." unless $old_task;
 
+    # Switching to current task is invalid
+    die "Specified task is already active." if $old_task eq $task_name;
+
     # Switch task
     my $rows = $dbh->do("UPDATE activities SET end_utc = $DATETIME_NOW " .
                           "WHERE end_utc = $DATETIME_INF;");
