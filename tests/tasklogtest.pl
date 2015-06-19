@@ -11,7 +11,7 @@ use DateTime;
 use lib '../';
 use tasklog;
 
-my $now_utc = DateTime->now(time_zone => 'UTC');
+sub now_jst { DateTime->now(time_zone => 'Asia/Tokyo') }
 
 # Backup existing DB file
 my $backup_db_file_path = tasklog::get_db_file_path .
@@ -47,11 +47,13 @@ ok(!tasklog::contain(['foo', 'bar', 'baz'], 'barbar'), "Should recognize list do
 # Test str2datetime()
 is(tasklog::str2datetime('2015-06-19', '02:00:30'), 'datetime("2015-06-18 17:00:30")',
    "Should return appropriate datetime string by UTC");
-is(tasklog::str2datetime('02:00:30'), sprintf('datetime("%s 17:00:30")', $now_utc->strftime('%Y-%m-%d')),
+is(tasklog::str2datetime('02:00:30'),
+   sprintf('datetime("%s 17:00:30")', now_jst->subtract(days => 1)->strftime('%Y-%m-%d')),
    "Should return appropriate datetime string by UTC");
 is(tasklog::str2datetime('2015-06-19', '02:00'), 'datetime("2015-06-18 17:00:00")',
    "Should return appropriate datetime string by UTC");
-is(tasklog::str2datetime('02:00'), sprintf('datetime("%s 17:00:00")', $now_utc->strftime('%Y-%m-%d')),
+is(tasklog::str2datetime('02:00'),
+   sprintf('datetime("%s 17:00:00")', now_jst->subtract(days => 1)->strftime('%Y-%m-%d')),
    "Should return appropriate datetime string by UTC");
 is(tasklog::str2datetime(), 'datetime("now")',
    "Should return appropriate datetime string by UTC");
