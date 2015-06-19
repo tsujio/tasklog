@@ -268,6 +268,8 @@ sub execute_switch {
   my $task_name = shift;
   die "Task name must be specified." unless $task_name;
 
+  my $sw_datetime = str2datetime(@_);
+
   invoke_with_connection sub {
     my $dbh = shift;
 
@@ -282,18 +284,18 @@ sub execute_switch {
     die "Specified task is already active." if $old_task eq $task_name;
 
     # Switch task
-    my $rows = $dbh->do("UPDATE activities SET end_utc = $DATETIME_NOW " .
+    my $rows = $dbh->do("UPDATE activities SET end_utc = $sw_datetime " .
                           "WHERE end_utc = $DATETIME_INF;");
     die "Unexpectedly $rows rows seem to be affected." unless $rows == 1;
     my $sth = $dbh->prepare("INSERT INTO activities(task_name, start_utc, end_utc) " .
-                              "VALUES(?, $DATETIME_NOW, $DATETIME_INF);");
+                              "VALUES(?, $sw_datetime, $DATETIME_INF);");
     $sth->execute($task_name);
     die "Unexpectedly " . $sth->rows . " rows seem to be affected."
       unless $sth->rows == 1;
 
     # Change task states
-    switch_task_state($dbh, $old_task, 'SUSPENDED');
-    switch_task_state($dbh, $task_name, 'ACTIVE');
+    switch_task_state($dbh, $old_task, 'SUSPENDED', $sw_datetime);
+    switch_task_state($dbh, $task_name, 'ACTIVE', $sw_datetime);
 
     say "Task switched: $old_task -> $task_name";
   };
@@ -472,7 +474,7 @@ sub main {
 COMMANDS:
   start TASK [[yyyy-MM-dd] hh:mm[:ss]]
   end [[yyyy-MM-dd] hh:mm[:ss]]
-  switch TASK       (alias: s)
+  switch TASK [[yyyy-MM-dd] hh:mm[:ss]]      (alias: s)
   show
   task (add | remove | history) TASK |
        list |
