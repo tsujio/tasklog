@@ -112,8 +112,42 @@ is(scalar @$rows, 1, "# of tasks should not change");
 tasklog::execute_task('remove', 'testtask1');
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
 is(scalar @$rows, 0, "Task should be removed");
+$rows = $dbh->selectall_arrayref('SELECT COUNT(*) FROM tasks');
+is(scalar $rows->[0][0], 1, "Other tasks should not be removed");
+
+eval { tasklog::execute_task('remove', 'testtask1') };
+like($@, qr/Task testtask1 not found/, "Error message should be passed");
 
 tasklog::execute_task('add', 'testtask1');
+
+## Test task state
+tasklog::execute_task('add', 'testtask3');
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask3"');
+is($rows->[0][1], 0, "Task state should be INITIAL");
+
+tasklog::execute_task('state', 'testtask3', 'SUSPENDED');
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask3"');
+is($rows->[0][1], 1, "Task state should be SUSPENDED");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask3"');
+is(scalar @$rows, 1, "Task history should be recorded");
+is($rows->[0][2], 0, "State of recorded history should be INITIAL");
+
+eval { tasklog::execute_task('state', 'testtask3', 'SUSPENDED') };
+like($@, qr/^State of task is already specified one./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask3"');
+is($rows->[0][1], 1, "Task state should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask3"');
+is(scalar @$rows, 1, "Task history should not be recorded");
+
+eval { tasklog::execute_task('state', 'testtask99', 'SUSPENDED') };
+like($@, qr/^Cannot determine which task to change state/, "Error message should be passed");
+
+eval { tasklog::execute_task('state', 'testtask3', 'UNKNOWN') };
+like($@, qr/^Unexpected state string./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask3"');
+is($rows->[0][1], 1, "Task state should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask3"');
+is(scalar @$rows, 1, "Task history should not be recorded");
 
 # Test execute_start()
 tasklog::execute_start('testtask1');
@@ -121,39 +155,57 @@ $rows = $dbh->selectall_arrayref('SELECT * FROM activities WHERE task_name = "te
 is(scalar @$rows, 1, "A single activity should be added");
 is($rows->[0][1], 'testtask1', "Specified task name should be started");
 is($rows->[0][3], '9999-01-01 00:00:00', "End time should be infinite");
-
-$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE state = 2');
+is(scalar @$rows, 1, "A single active task alone should exist");
 is($rows->[0][1], 2, "State of started task should be ACTIVE");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
 is(scalar @$rows, 1, "Task history should be recorded");
 is($rows->[0][2], 0, "State of recorded history should be INITIAL");
 
 eval { tasklog::execute_start('testtask1') };
-isnt(index($@, 'active task already exist'), -1, "Error message should be passed");
+like($@, qr/^active task already exist/, "Error message should be passed");
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities');
 is(scalar @$rows, 1, "Activity should not be added");
 is($rows->[0][3], '9999-01-01 00:00:00', "Existing activity should not end");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
+is(scalar @$rows, 1, "Task history should not be recorded");
+
+eval { tasklog::execute_start('testtask99') };
+like($@, qr/^Task testtask99 not found/, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
+is(scalar @$rows, 1, "Activity should not be added");
+is($rows->[0][3], '9999-01-01 00:00:00', "Existing activity should not end");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
+is(scalar @$rows, 1, "Task history should not be recorded");
+
+eval { tasklog::execute_start('testtask2') };
+like($@, qr/^active task already exists/, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
+is(scalar @$rows, 1, "Activity should not be added");
+is($rows->[0][3], '9999-01-01 00:00:00', "Existing activity should not end");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
+is(scalar @$rows, 1, "Task history should not be recorded");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask2"');
+is(scalar @$rows, 0, "Task history should not be recorded");
 
 # Test execute_end()
 tasklog::execute_end();
-$rows = $dbh->selectall_arrayref('SELECT * FROM activities WHERE task_name = "testtask1"');
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
 is(scalar @$rows, 1, "End command should not add new activity");
 isnt($rows->[0][3], '9999-01-01 00:00:00', "End time should be recorded");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
 is($rows->[0][1], 1, "State of ended task should be SUSPEND");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
 is(scalar @$rows, 2, "Task history should be recorded");
 is($rows->[1][2], 2, "State of recorded history should be ACTIVE");
+is($rows->[0][3], $dbh->selectall_arrayref('SELECT * FROM activities')->[-1][3], "State change time should be equal to activity end time");
 
 eval { tasklog::execute_end() };
-isnt(index($@, "Cannot determine which task to end."), -1, "Error message should be passed");
-
+like($@, qr/^Cannot determine which task to end./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
+is(scalar @$rows, 1, "Activity should not be added");
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
 is($rows->[0][1], 1, "State of task should not change");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
 is(scalar @$rows, 2, "New history should not recorded");
 
@@ -164,32 +216,61 @@ is(scalar @$rows, 2, "New activity should be added");
 is($rows->[1][1], 'testtask1', "Specified task name should be started");
 is($rows->[1][3], '9999-01-01 00:00:00', "End time should be infinite");
 isnt($rows->[0][3], '9999-01-01 00:00:00', "Existing activity should not be affected");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
 is($rows->[0][1], 2, "State of started task should be ACTIVE");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
 is(scalar @$rows, 3, "Task history should be recorded");
 is($rows->[2][2], 1, "State of recorded history should be SUSPENDED");
+is($rows->[1][3], $dbh->selectall_arrayref('SELECT * FROM activities')->[-1][2], "State change time should be equal to activity start time");
 
 tasklog::execute_switch('testtask2');
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY start_utc');
 is(scalar @$rows, 3, "New activity should be added");
 is($rows->[2][1], 'testtask2', "Specified task name should be started");
+is($rows->[2][2], $rows->[1][3], "Start time should be equal to end time of previous activity");
 is($rows->[2][3], '9999-01-01 00:00:00', "End time should be infinite");
-isnt($rows->[1][3], '9999-01-01 00:00:00', "Existing activity should not be affected");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
 is($rows->[0][1], 2, "State of started task should be ACTIVE");
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
 is($rows->[0][1], 1, "State of started task should be SUSPEND");
-
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask1"');
 is(scalar @$rows, 4, "Task history should be recorded");
 is($rows->[3][2], 2, "State of recorded history should be ACTIVE");
+is($rows->[3][3], $dbh->selectall_arrayref('SELECT * FROM activities')->[-1][2], "State change time should be equal to current activity start time");
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask2"');
 is(scalar @$rows, 1, "Task history should be recorded");
 is($rows->[0][2], 0, "State of recorded history should be INITIAL");
+is($rows->[0][3], $dbh->selectall_arrayref('SELECT * FROM activities')->[-1][2], "State change time should be equal to current activity start time");
+
+eval { tasklog::execute_switch('testtask2') };
+like($@, qr/^Specified task is already active/, "Switching to the same task should not be allowed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY start_utc');
+is(scalar @$rows, 3, "New activity should not be added");
+is($rows->[2][3], '9999-01-01 00:00:00', "End time should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
+is($rows->[0][1], 2, "State should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask2"');
+is(scalar @$rows, 1, "Task history should not be recorded");
+
+eval { tasklog::execute_switch('testtask99') };
+like($@, qr/^Task testtask99 not found/, "Switching to unknown task should not be allowed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY start_utc');
+is(scalar @$rows, 3, "New activity should not be added");
+is($rows->[2][3], '9999-01-01 00:00:00', "End time should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
+is($rows->[0][1], 2, "State should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask2"');
+is(scalar @$rows, 1, "Task history should not be recorded");
+
+tasklog::execute_end();
+eval { tasklog::execute_switch('testtask2') };
+like($@, qr/^Cannot determine which task to switch/, "Switching from non-active task should not be allowed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY start_utc');
+is(scalar @$rows, 3, "New activity should not be added");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
+is($rows->[0][1], 1, "State should not change");
+$rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask2"');
+is(scalar @$rows, 2, "Task history should not be recorded");
 
 # Clean up
 unlink tasklog::get_db_file_path;
