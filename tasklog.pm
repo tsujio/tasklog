@@ -183,6 +183,7 @@ sub switch_task_state {
   my $sth = $dbh->prepare('SELECT name, state FROM tasks WHERE name = ?');
   $sth->execute($task_name);
   my $task = $sth->fetchrow_hashref;
+  die "Task $task_name not found." unless $task;
   die "Cannot determine which task to change state." if $sth->fetchrow_hashref;
 
   # Switching to the same state is invalid
@@ -220,7 +221,7 @@ sub execute_start {
     die "Task $task_name not found." unless task_exists($dbh, $task_name);
 
     # Verify that no active task exists
-    die "active task already exist." if get_current_task($dbh);
+    die "active task already exists." if get_current_task($dbh);
 
     # Start task
     my $sth = $dbh->prepare(
@@ -401,6 +402,7 @@ sub execute_task {
     my $datetime = str2datetime(@_);
     invoke_with_connection sub {
       my $dbh = shift;
+      die "Task $task_name not found." unless task_exists($dbh, $task_name);
       switch_task_state($dbh, $task_name, $state, $datetime);
       say "Switched state of task $task_name to $state.";
     };

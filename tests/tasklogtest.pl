@@ -140,7 +140,7 @@ $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_na
 is(scalar @$rows, 1, "Task history should not be recorded");
 
 eval { tasklog::execute_task('state', 'testtask99', 'SUSPENDED') };
-like($@, qr/^Cannot determine which task to change state/, "Error message should be passed");
+like($@, qr/^Task testtask99 not found/, "Error message should be passed");
 
 eval { tasklog::execute_task('state', 'testtask3', 'UNKNOWN') };
 like($@, qr/^Unexpected state string./, "Error message should be passed");
