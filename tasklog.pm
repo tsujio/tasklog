@@ -190,10 +190,14 @@ sub switch_task_state {
     "INSERT INTO task_state_history(task_name, state, until_utc) " .
     "VALUES(?, ?, $datetime);");
   $sth->execute($task->{name}, $task->{state});
+  die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+    unless $sth->rows == 1;
 
   # Update task state
   $sth = $dbh->prepare('UPDATE tasks SET state = ? WHERE name = ?;');
   $sth->execute(str2stateid($state), $task_name);
+  die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+    unless $sth->rows == 1;
 }
 
 # Execute start command
@@ -219,6 +223,8 @@ sub execute_start {
       "INSERT INTO activities(task_name, start_utc, end_utc) " .
         "VALUES(?, $start_datetime, $DATETIME_INF);");
     $sth->execute($task_name);
+    die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+      unless $sth->rows == 1;
 
     # Switch task state to active
     switch_task_state($dbh, $task_name, 'ACTIVE', $start_datetime);
@@ -242,8 +248,9 @@ sub execute_end {
     die "Cannot determine which task to end." unless $task_name;
 
     # End task
-    $dbh->do("UPDATE activities SET end_utc = $end_datetime " .
-               "WHERE end_utc = $DATETIME_INF;");
+    my $rows = $dbh->do("UPDATE activities SET end_utc = $end_datetime " .
+                          "WHERE end_utc = $DATETIME_INF;");
+    die "Unexpectedly $rows rows seem to be affected." unless $rows == 1;
 
     # Switch task state to suspended
     switch_task_state($dbh, $task_name, 'SUSPENDED', $end_datetime);
@@ -268,11 +275,14 @@ sub execute_switch {
     die "Cannot determine which task to switch." unless $old_task;
 
     # Switch task
-    $dbh->do("UPDATE activities SET end_utc = $DATETIME_NOW " .
-               "WHERE end_utc = $DATETIME_INF;");
+    my $rows = $dbh->do("UPDATE activities SET end_utc = $DATETIME_NOW " .
+                          "WHERE end_utc = $DATETIME_INF;");
+    die "Unexpectedly $rows rows seem to be affected." unless $rows == 1;
     my $sth = $dbh->prepare("INSERT INTO activities(task_name, start_utc, end_utc) " .
                               "VALUES(?, $DATETIME_NOW, $DATETIME_INF);");
     $sth->execute($task_name);
+    die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+      unless $sth->rows == 1;
 
     # Change task states
     switch_task_state($dbh, $old_task, 'SUSPENDED');
@@ -323,6 +333,8 @@ sub execute_task {
       my $sth = $dbh->prepare(
         "INSERT INTO tasks(name, state, created_at) VALUES(?, ?, $DATETIME_NOW);");
       $sth->execute($task_name, str2stateid('INITIAL'));
+      die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+        unless $sth->rows == 1;
       say "Added new task: $task_name";
     };
   } elsif ($arg eq 'remove') {
@@ -334,6 +346,8 @@ sub execute_task {
         if task_log_exists($dbh, $task_name);
       my $sth = $dbh->prepare('DELETE FROM tasks WHERE name = ?');
       $sth->execute($task_name);
+      die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+        unless $sth->rows == 1;
       say "Removed task: $task_name";
     };
   } elsif ($arg eq 'list') {
