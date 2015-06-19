@@ -306,8 +306,9 @@ sub execute_show {
 sub execute_task {
   my $arg = shift;
   my $task_name = shift;
-  if (not $arg or
-      not contain ['add', 'remove', 'list', 'history', 'state'], $arg) {
+
+  $arg //= 'list';
+  if (not contain ['add', 'remove', 'list', 'history', 'state'], $arg) {
     die "Unexpected args for 'task'";
   }
   if (contain ['add', 'remove', 'history', 'state'], $arg and not $task_name) {
