@@ -185,6 +185,10 @@ sub switch_task_state {
   my $task = $sth->fetchrow_hashref;
   die "Cannot determine which task to change state." if $sth->fetchrow_hashref;
 
+  # Switching to the same state is invalid
+  die "State of task is already specified one."
+    if $state eq stateid2str($task->{state});
+
   # Record task state history
   $sth = $dbh->prepare(
     "INSERT INTO task_state_history(task_name, state, until_utc) " .
