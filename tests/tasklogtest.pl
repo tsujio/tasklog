@@ -272,6 +272,21 @@ is($rows->[0][1], 1, "State should not change");
 $rows = $dbh->selectall_arrayref('SELECT * FROM task_state_history WHERE task_name = "testtask2"');
 is(scalar @$rows, 2, "Task history should not be recorded");
 
+# Test task_exists()
+ok(tasklog::task_exists($dbh, 'testtask1'), "Task should exist");
+ok(!tasklog::task_exists($dbh, 'testtask99'), "Task should not exist");
+
+# Test task_log_exists()
+tasklog::execute_task('add', 'testtask100');
+ok(tasklog::task_log_exists($dbh, 'testtask1'), "Task log should exist");
+ok(!tasklog::task_log_exists($dbh, 'testtask100'), "Task log should not exist");
+
+# Test get_current_task()
+eval { tasklog::execute_end() };
+ok(!defined tasklog::get_current_task($dbh), "Should not return current task");
+tasklog::execute_start('testtask1');
+is(tasklog::get_current_task($dbh), 'testtask1', "Should return current task");
+
 # Clean up
 unlink tasklog::get_db_file_path;
 if (-e $backup_db_file_path) {
