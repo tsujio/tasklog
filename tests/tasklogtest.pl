@@ -1,4 +1,4 @@
-use Test::More tests => 51;
+use Test::More;
 
 use 5.010;
 use strict;
@@ -196,3 +196,5 @@ unlink tasklog::get_db_file_path;
 if (-e $backup_db_file_path) {
   rename $backup_db_file_path, tasklog::get_db_file_path or die $!;
 }
+
+done_testing();
