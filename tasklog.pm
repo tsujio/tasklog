@@ -10,6 +10,7 @@ use File::Spec::Functions 'catfile';
 use List::Util;
 use DateTime;
 use DateTime::Format::Strptime;
+use Getopt::Long;
 
 my $DB_FILENAME = 'tasklog.sqlite';
 my $TIME_ZONE = 'Asia/Tokyo';
@@ -17,6 +18,7 @@ my $DATETIME_FORMAT = '%Y-%m-%d %H:%M:%S';
 my $DATETIME_NOW = 'datetime("now")';
 my $DATETIME_INF_STR = '9999-01-01 00:00:00';
 my $DATETIME_INF = "datetime('$DATETIME_INF_STR')";
+my $TASKNAME_MAXLEN = 64;
 
 # Set DB file path
 my $script_dir = $FindBin::Bin;
@@ -27,11 +29,32 @@ sub get_db_file_path {
   $db_file_path;
 }
 
+# Actions
+my %action_ids = (
+  start => 1,
+  suspend => 2,
+  block => 3,
+  close => 4
+);
+
+# Convert action string to id
+sub str2actionid {
+  die "Unknown action." unless defined($_[0]) && exists($action_ids{$_[0]});
+  $action_ids{$_[0]};
+}
+
+# Convert action id to string
+sub actionid2str {
+  my %rev = reverse %action_ids;
+  die "Unknown action id." unless defined($_[0]) && exists($rev{$_[0]});
+  $rev{$_[0]};
+}
+
 # Task states
 my %state_ids = (
   INITIAL => 0,
-  SUSPENDED => 1,
-  ACTIVE => 2,
+  ACTIVE => 1,
+  SUSPENDED => 2,
   BLOCKED => 3,
   CLOSED => 4,
 );
@@ -49,6 +72,17 @@ sub stateid2str {
   $rev{$_[0]};
 }
 
+# Convert action string to state id
+sub action2stateid {
+  my %aid2sid = (
+    1 => 1,
+    2 => 2,
+    3 => 3,
+    4 => 4,
+  );
+  $aid2sid{str2actionid(shift)}
+}
+
 # Check if list contains given string
 sub contain {
   List::Util::any { $_ eq $_[1] } @{$_[0]};
@@ -56,45 +90,27 @@ sub contain {
 
 # Convert string to datetime sqlite function
 sub str2datetime {
-  my ($date, $time) = @_[0, 1];
+  my $str = shift;
 
   # Return current datetime unless date string given
-  return $DATETIME_NOW unless $date;
+  return $DATETIME_NOW unless $str;
 
-  # Use the first argument as time string if # of args is 1
-  if (not $time) {
-    $time = $date;
-    $date = undef;
+  # Parse string
+  if ($str !~ /^(?:(?<year>\d{4})-(?<month>\d{2})-(?<day>\d{2})
+                 _)?
+               (?<hour>\d{2}):(?<minute>\d{2})(?::(?<second>\d{2}))?$
+              /x) {
+    die "Invalid datetime string format.";
   }
 
-  # Parse time string
-  if ($time !~ /^(\d{2}):(\d{2})(?::(\d{2}))?$/) {
-    die "Invalid time string format.";
-  }
-  my ($hour, $min, $sec) = ($1, $2, $3 // '00');
-
-  # Use current date if date string not given
-  if (not $date) {
-    my $dt = DateTime->now(time_zone => $TIME_ZONE);
-    eval {
-      $dt->set_hour($hour);
-      $dt->set_minute($min);
-      $dt->set_second($sec);
-    };
-    die "Invalid time string format." if $@;
-    $dt->set_time_zone('UTC');
-    return sprintf 'datetime("%s")', $dt->strftime($DATETIME_FORMAT);
-  }
-
-  # Parse date string
-  if ($date !~ /^(\d{4})-(\d{2})-(\d{2})$/) {
-    die "Invalid date string format.";
-  }
-  my $dt = eval {
-    DateTime->new(
-      time_zone => $TIME_ZONE,
-      year => $1, month => $2, day => $3,
-      hour => $hour, minute => $min, second => $sec)
+  my $dt = DateTime->now(time_zone => $TIME_ZONE);
+  eval {
+    $dt->set_year($+{year}) if exists $+{year};
+    $dt->set_month($+{month}) if exists $+{month};
+    $dt->set_day($+{day}) if exists $+{day};
+    $dt->set_hour($+{hour}) if exists $+{hour};
+    $dt->set_minute($+{minute}) if exists $+{minute};
+    $dt->set_second($+{second} // '00');
   };
   die "Invalid datetime string format." if $@;
   $dt->set_time_zone('UTC');
@@ -150,132 +166,120 @@ sub invoke_with_connection {
 sub task_exists {
   my $dbh = shift;
   my $task_name = shift;
-  my $sth = $dbh->prepare('SELECT * FROM tasks WHERE name = ?');
+  my $sth = $dbh->prepare('SELECT COUNT(*) FROM tasks WHERE name = ?');
   $sth->execute($task_name);
-  $sth->fetchrow_hashref
-}
-
-# Check if activities of given task exist
-sub task_log_exists {
-  my $dbh = shift;
-  my $task_name = shift;
-  my $sth = $dbh->prepare('SELECT * FROM activities WHERE task_name = ?');
-  $sth->execute($task_name);
-  $sth->fetchrow_hashref
+  $sth->fetchrow_arrayref->[0] == 1;
 }
 
 # Get current task name
 sub get_current_task {
   my $dbh = shift;
   my $rows = $dbh->selectall_arrayref(
-    "SELECT task_name FROM activities WHERE end_utc = $DATETIME_INF");
+    'SELECT * FROM tasks WHERE state = ?', undef, str2stateid('ACTIVE'));
   die "There are multiple active tasks." if @$rows > 1;
   @$rows > 0 ? $rows->[0][0] : undef;
 }
 
-# Switch task state
-sub switch_task_state {
-  my $dbh = shift;
-  my ($task_name, $state, $datetime) = @_;
-  $datetime //= $DATETIME_NOW;
+# Record activity
+sub record_activity {
+  my ($dbh, $task_name, $action, $when_utc) = @_;
 
-  # Get state of given task
-  my $sth = $dbh->prepare('SELECT name, state FROM tasks WHERE name = ?');
-  $sth->execute($task_name);
-  my $task = $sth->fetchrow_hashref;
-  die "Task $task_name not found." unless $task;
-  die "Cannot determine which task to change state." if $sth->fetchrow_hashref;
+  # Verify preconditions
+  die "Task $task_name not found." unless task_exists($dbh, $task_name);
+  my $row = $dbh->selectrow_arrayref(
+    'SELECT state FROM tasks WHERE name = ?', undef, $task_name);
+  die "Unexpected task state." if $row->[0] == action2stateid($action);
 
-  # Switching to the same state is invalid
-  die "State of task is already specified one."
-    if $state eq stateid2str($task->{state});
+  # Add activity
+  my $sth = $dbh->prepare(
+    "INSERT INTO activities(task_name, action, when_utc) " .
+      "VALUES(?, ?, $when_utc);");
+  $sth->execute($task_name, str2actionid($action));
 
-  # Record task state history
-  $sth = $dbh->prepare(
-    "INSERT INTO task_state_history(task_name, state, until_utc) " .
-    "VALUES(?, ?, $datetime);");
-  $sth->execute($task->{name}, $task->{state});
-  die "Unexpectedly " . $sth->rows . " rows seem to be affected."
-    unless $sth->rows == 1;
-
-  # Update task state
-  $sth = $dbh->prepare('UPDATE tasks SET state = ? WHERE name = ?;');
-  $sth->execute(str2stateid($state), $task_name);
-  die "Unexpectedly " . $sth->rows . " rows seem to be affected."
-    unless $sth->rows == 1;
+  # Change task state
+  $sth = $dbh->prepare('UPDATE tasks SET state = ? WHERE name = ?');
+  $sth->execute(action2stateid($action), $task_name);
+  die "Unexpectedly " . $sth->rows . " rows have changed." if $sth->rows != 1;
 }
 
 # Execute start command
 sub execute_start {
+  my $opts = shift;
   my $task_name = shift;
-  my ($date_str, $time_str) = @_;
   die "Task name must be specified." unless $task_name;
 
   # Get start datetime
-  my $start_datetime = str2datetime($date_str, $time_str);
+  my $start_utc = str2datetime($opts->{date});
 
   invoke_with_connection sub {
     my $dbh = shift;
 
-    # Verify that task to start exists
-    die "Task $task_name not found." unless task_exists($dbh, $task_name);
-
     # Verify that no active task exists
     die "active task already exists." if get_current_task($dbh);
 
-    # Start task
-    my $sth = $dbh->prepare(
-      "INSERT INTO activities(task_name, start_utc, end_utc) " .
-        "VALUES(?, $start_datetime, $DATETIME_INF);");
-    $sth->execute($task_name);
-    die "Unexpectedly " . $sth->rows . " rows seem to be affected."
-      unless $sth->rows == 1;
-
-    # Switch task state to active
-    switch_task_state($dbh, $task_name, 'ACTIVE', $start_datetime);
+    # Record start activity
+    record_activity($dbh, $task_name, 'start', $start_utc);
 
     say "Task $task_name started.";
   };
 }
 
-# Execute end command
-sub execute_end {
-  my ($date_str, $time_str) = @_;
+# Inactivate (suspend, block, close, ...) task
+sub inactivate_task {
+  my $cmd = shift;
+  my $opts = shift;
+  my $task_name = shift;
 
-  # Get end datetime
-  my $end_datetime = str2datetime($date_str, $time_str);
+  # Get datetime
+  my $when_utc = str2datetime($opts->{date});
 
   invoke_with_connection sub {
     my $dbh = shift;
 
-    # Verify that task to end exists
-    my $task_name = get_current_task($dbh);
-    die "Cannot determine which task to end." unless $task_name;
+    # inactivate current task if task name not specified
+    $task_name //= get_current_task($dbh);
+    die "Cannot determine which task to $cmd." unless $task_name;
 
-    # End task
-    my $rows = $dbh->do("UPDATE activities SET end_utc = $end_datetime " .
-                          "WHERE end_utc = $DATETIME_INF;");
-    die "Unexpectedly $rows rows seem to be affected." unless $rows == 1;
-
-    # Switch task state to suspended
-    switch_task_state($dbh, $task_name, 'SUSPENDED', $end_datetime);
-
-    say "Task $task_name ended.";
+    # Record activity
+    record_activity($dbh, $task_name, $cmd, $when_utc);
   };
+
+  $task_name
+}
+
+# Execute suspend command
+sub execute_suspend {
+  my $task_name = inactivate_task('suspend', @_);
+  say "Task $task_name suspended.";
+}
+
+# Execute block command
+sub execute_block {
+  my $task_name = inactivate_task('block', @_);
+  say "Task $task_name blocked.";
+}
+
+# Execute close command
+sub execute_close {
+  my $task_name = inactivate_task('close', @_);
+  say "Task $task_name closed.";
 }
 
 # Execute switch command
 sub execute_switch {
+  my $opts = shift;
   my $task_name = shift;
   die "Task name must be specified." unless $task_name;
 
-  my $sw_datetime = str2datetime(@_);
+  my $cmd =
+    $opts->{suspend} ? 'suspend' :
+      $opts->{block} ? 'block' :
+        $opts->{close} ? 'close' :
+          'suspend';
+  my $sw_utc = str2datetime($opts->{date});
 
   invoke_with_connection sub {
     my $dbh = shift;
-
-    # Verify that task to start exists
-    die "Task $task_name not found." unless task_exists($dbh, $task_name);
 
     # Verify that task to end exists
     my $old_task = get_current_task($dbh);
@@ -284,19 +288,8 @@ sub execute_switch {
     # Switching to current task is invalid
     die "Specified task is already active." if $old_task eq $task_name;
 
-    # Switch task
-    my $rows = $dbh->do("UPDATE activities SET end_utc = $sw_datetime " .
-                          "WHERE end_utc = $DATETIME_INF;");
-    die "Unexpectedly $rows rows seem to be affected." unless $rows == 1;
-    my $sth = $dbh->prepare("INSERT INTO activities(task_name, start_utc, end_utc) " .
-                              "VALUES(?, $sw_datetime, $DATETIME_INF);");
-    $sth->execute($task_name);
-    die "Unexpectedly " . $sth->rows . " rows seem to be affected."
-      unless $sth->rows == 1;
-
-    # Change task states
-    switch_task_state($dbh, $old_task, 'SUSPENDED', $sw_datetime);
-    switch_task_state($dbh, $task_name, 'ACTIVE', $sw_datetime);
+    record_activity($dbh, $old_task, $cmd, $sw_utc);
+    record_activity($dbh, $task_name, 'start', $sw_utc);
 
     say "Task switched: $old_task -> $task_name";
   };
@@ -306,61 +299,61 @@ sub execute_switch {
 sub execute_show {
   invoke_with_connection 'readonly', sub {
     my $dbh = shift;
-    my $sth = $dbh->prepare('SELECT * FROM activities ORDER BY start_utc');
+    my $sth = $dbh->prepare('SELECT * FROM activities ORDER BY when_utc');
     $sth->execute;
 
     # Show activities
-    say "id\ttask_name\tstart\tend";
+    say "id\ttask_name\taction\twhen";
     say "-" x 79;
     while (my $row = $sth->fetchrow_hashref) {
       printf "%s\t%s\t%s\t%s\n",
         $row->{id}, $row->{task_name},
-        utc2localtime($row->{start_utc}),
-        $row->{end_utc} ne $DATETIME_INF_STR ?
-          utc2localtime($row->{end_utc}) : '';
+        actionid2str($row->{action}),
+        utc2localtime($row->{when_utc});
     }
   };
 }
 
 # Execute task command
 sub execute_task {
-  my $arg = shift;
+  my $opts = shift;
+  my $subcmd = shift;
   my $task_name = shift;
 
-  $arg //= 'list';
-  if (not contain ['add', 'remove', 'list', 'history', 'state'], $arg) {
-    die "Unexpected args for 'task'";
+  $subcmd //= 'list';
+  if (not contain ['add', 'remove', 'list'], $subcmd) {
+    die "Unexpected subcommand for 'task'";
   }
-  if (contain ['add', 'remove', 'history', 'state'], $arg and not $task_name) {
-    die "Task name must be specified.";
+  if (contain ['add', 'remove'], $subcmd) {
+    die "Task name must be specified." unless $task_name;
+    die "Too long task name." if length $task_name > $TASKNAME_MAXLEN;
   }
 
-  if ($arg eq 'add') {
+  if ($subcmd eq 'add') {
     # Add task
     invoke_with_connection sub {
       my $dbh = shift;
       die "Task $task_name already exists." if task_exists($dbh, $task_name);
       my $sth = $dbh->prepare(
-        "INSERT INTO tasks(name, state, created_at) VALUES(?, ?, $DATETIME_NOW);");
+        "INSERT INTO tasks(name, state, created_at) " .
+          "VALUES(?, ?, $DATETIME_NOW)");
       $sth->execute($task_name, str2stateid('INITIAL'));
-      die "Unexpectedly " . $sth->rows . " rows seem to be affected."
+      die "Unexpectedly " . $sth->rows . " rows have changed."
         unless $sth->rows == 1;
       say "Added new task: $task_name";
     };
-  } elsif ($arg eq 'remove') {
+  } elsif ($subcmd eq 'remove') {
     # Remove task
     invoke_with_connection sub {
       my $dbh = shift;
       die "Task $task_name not found." unless task_exists($dbh, $task_name);
-      die "Cannot delete task $task_name because some activities have been recorded."
-        if task_log_exists($dbh, $task_name);
       my $sth = $dbh->prepare('DELETE FROM tasks WHERE name = ?');
       $sth->execute($task_name);
       die "Unexpectedly " . $sth->rows . " rows seem to be affected."
         unless $sth->rows == 1;
       say "Removed task: $task_name";
     };
-  } elsif ($arg eq 'list') {
+  } elsif ($subcmd eq 'list') {
     # List tasks
     invoke_with_connection 'readonly', sub {
       my $dbh = shift;
@@ -374,49 +367,18 @@ sub execute_task {
           utc2localtime($row->{created_at});
       }
     };
-  } elsif ($arg eq 'history') {
-    # Show task history
-    invoke_with_connection 'readonly', sub {
-      my $dbh = shift;
-      die "Task $task_name not found." unless task_exists($dbh, $task_name);
-      my $sth = $dbh->prepare(
-        'SELECT * FROM task_state_history WHERE task_name = ? ' .
-        'ORDER BY until_utc;');
-      $sth->execute($task_name);
-      say "state\tuntil";
-      say '-' x 79;
-      while (my $row = $sth->fetchrow_hashref) {
-        say sprintf "%s\t%s",
-          stateid2str($row->{state}),
-          utc2localtime($row->{until_utc});
-      }
-      $sth = $dbh->prepare('SELECT state FROM tasks WHERE name = ?');
-      $sth->execute($task_name);
-      my $current_state = $sth->fetchrow_hashref()->{state};
-      say sprintf "%s\t", stateid2str($current_state);
-    };
-  } elsif ($arg eq 'state') {
-    # Modify task state
-    my $state = shift;
-    die "Task state to set must be specified." unless $state;
-    my $datetime = str2datetime(@_);
-    invoke_with_connection sub {
-      my $dbh = shift;
-      die "Task $task_name not found." unless task_exists($dbh, $task_name);
-      switch_task_state($dbh, $task_name, $state, $datetime);
-      say "Switched state of task $task_name to $state.";
-    };
   }
 }
 
 # Execute db command
 sub execute_db {
-  my $arg = shift;
-  if (not $arg or not contain ['setup', 'desc'], $arg) {
+  my $opts = shift;
+  my $subcmd = shift;
+  if (not $subcmd or not contain ['setup', 'desc'], $subcmd) {
     die "Unexpected args for 'db'";
   }
 
-  if ($arg eq 'setup') {
+  if ($subcmd eq 'setup') {
     # Setup DB
     invoke_with_connection 'create', sub {
       my $dbh = shift;
@@ -424,8 +386,8 @@ sub execute_db {
 CREATE TABLE activities (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   task_name CHAR(64) REFERENCES tasks(name) NOT NULL,
-  start_utc DATETIME NOT NULL,
-  end_utc DATETIME NOT NULL
+  action INT UNSIGNED NOT NULL,
+  when_utc DATETIME NOT NULL
 );
 SQL
       $dbh->do(<<SQL);
@@ -436,23 +398,17 @@ CREATE TABLE tasks (
 );
 SQL
       $dbh->do(<<SQL);
-CREATE TABLE task_state_history (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  task_name CHAR(64) REFERENCES tasks(name) NOT NULL,
-  state INT UNSIGNED NOT NULL,
-  until_utc DATETIME NOT NULL
-);
-SQL
-      $dbh->do(<<SQL);
 CREATE TABLE config (
   name CHAR(32) PRIMARY KEY,
   value VARCHAR(256) NOT NULL
 );
 SQL
       $dbh->do(
-        'INSERT INTO config(name, value) VALUES("version", "0.2.0");');
+        'INSERT INTO config(name, value) VALUES("version", "0.3.0");');
+
+      say "Created: $db_file_path";
     };
-  } elsif ($arg eq 'desc') {
+  } elsif ($subcmd eq 'desc') {
     # Show DB description
     invoke_with_connection 'readonly', sub {
       my $dbh = shift;
@@ -465,8 +421,18 @@ SQL
 }
 
 sub main {
+  GetOptions(\my %opts, qw(
+    suspend|s
+    block|b
+    close|c
+    date|d=s
+  ));
+  @_ = @ARGV;
+
   # List of commands
-  my @commands = ('start', 'end', 'switch', 's', 'show', 'task', 'db');
+  my @commands = (
+    'start', 'suspend', 'block', 'close', 'switch', 's',
+    'show', 'task', 'db');
 
   # Check user input command
   my $cmd = shift;
@@ -474,26 +440,31 @@ sub main {
     say <<EOS;
 
 COMMANDS:
-  start TASK [[yyyy-MM-dd] hh:mm[:ss]]
-  end [[yyyy-MM-dd] hh:mm[:ss]]
-  switch TASK [[yyyy-MM-dd] hh:mm[:ss]]      (alias: s)
+  (start | suspend | block | close) TASK
+  switch (alias: s) TASK
   show
-  task (add | remove | history) TASK |
-       list |
-       state TASK STATE [[yyyy-MM-dd] hh:mm[:ss]]
+  task ( (add | remove) TASK | list )
   db (setup | desc)
   help
+
+OPTIONS:
+  --suspend -s    Suspend current task (Used with the switch command)
+  --block -b      Block current task (Used with the switch command)
+  --close -c      Close current task (Used with the switch command)
+  --date -d [yyyy-MM-dd_]hh:mm[:ss]
 EOS
     return 0;
   }
 
   # Execute command
-  if ($cmd eq 'start') { execute_start(@_); }
-  elsif ($cmd eq 'end') { execute_end(@_); }
-  elsif ($cmd eq 'switch' or $cmd eq 's') { execute_switch(@_); }
-  elsif ($cmd eq 'show') { execute_show(@_); }
-  elsif ($cmd eq 'task') { execute_task(@_); }
-  elsif ($cmd eq 'db') { execute_db(@_); }
+  if ($cmd eq 'start') { execute_start(\%opts, @_); }
+  elsif ($cmd eq 'suspend') { execute_suspend(\%opts, @_); }
+  elsif ($cmd eq 'block') { execute_block(\%opts, @_); }
+  elsif ($cmd eq 'close') { execute_close(\%opts, @_); }
+  elsif ($cmd eq 'switch' or $cmd eq 's') { execute_switch(\%opts, @_); }
+  elsif ($cmd eq 'show') { execute_show(\%opts, @_); }
+  elsif ($cmd eq 'task') { execute_task(\%opts, @_); }
+  elsif ($cmd eq 'db') { execute_db(\%opts, @_); }
   else { die "Unknown command: $cmd"; }
 
   return 0;
