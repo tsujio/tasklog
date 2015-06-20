@@ -11,6 +11,7 @@ use List::Util;
 use DateTime;
 use DateTime::Format::Strptime;
 use Getopt::Long;
+use Text::CSV_XS;
 
 my $DB_FILENAME = 'tasklog.sqlite';
 my $TIME_ZONE = 'Asia/Tokyo';
@@ -370,11 +371,24 @@ sub execute_task {
   }
 }
 
+my @DB_DUMP_FORMATS = (
+  {
+    table => 'tasks',
+    columns => ['name', 'state', 'created_at'],
+    orderby => 'name',
+  },
+  {
+    table => 'activities',
+    columns => ['id', 'task_name', 'action', 'when_utc'],
+    orderby => 'id',
+  },
+);
+
 # Execute db command
 sub execute_db {
   my $opts = shift;
   my $subcmd = shift;
-  if (not $subcmd or not contain ['setup', 'desc'], $subcmd) {
+  if (not $subcmd or not contain ['setup', 'desc', 'dump', 'import'], $subcmd) {
     die "Unexpected args for 'db'";
   }
 
@@ -417,6 +431,44 @@ SQL
       say "$_->[0] = $_->[1]" foreach @$rows;
       say '';
     };
+  } elsif ($subcmd eq 'dump') {
+    # Dump DB
+    invoke_with_connection 'readonly', sub {
+      my $dbh = shift;
+      foreach (@DB_DUMP_FORMATS) {
+        say "### " . $_->{table} . " ###";
+        my $stmt = sprintf 'SELECT * FROM %s ORDER BY %s',
+          $_->{table}, $_->{orderby};
+        my $sth = $dbh->prepare($stmt);
+        $sth->execute;
+        my $csv = Text::CSV_XS->new({binary => 1});
+        while (my $row = $sth->fetchrow_hashref) {
+          $csv->combine(@{$row}{@{$_->{columns}}}) or die $csv->error_diag();
+          say $csv->string();
+        }
+      }
+    };
+  } elsif ($subcmd eq 'import') {
+    # Import into DB
+    invoke_with_connection sub {
+      my $dbh = shift;
+      my $sth;
+      my $csv = Text::CSV_XS->new({binary => 1});
+      while (<STDIN>) {
+        chomp;
+        if (/^### (\S+) ###$/) {
+          my ($cols) = grep { $_->{table} eq $1 } @DB_DUMP_FORMATS;
+          $cols = $cols->{columns};
+          $sth = $dbh->prepare(
+            sprintf 'INSERT INTO %s(%s) VALUES(%s)',
+            $1, join(',', @$cols), substr('?,' x @$cols, 0, -1));
+          next;
+        }
+
+        $csv->parse($_) or die "Failed to parse line.";
+        $sth->execute($csv->fields);
+      }
+    };
   }
 }
 
@@ -444,7 +496,7 @@ COMMANDS:
   switch (alias: s) TASK
   show
   task ( (add | remove) TASK | list )
-  db (setup | desc)
+  db (setup | desc | dump | import)
   help
 
 OPTIONS:
