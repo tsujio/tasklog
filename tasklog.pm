@@ -478,7 +478,7 @@ sub main {
     block|b
     close|c
     date|d=s
-  ));
+  )) or die "Option parse error";
   @_ = @ARGV;
 
   # List of commands
