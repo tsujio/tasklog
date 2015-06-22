@@ -208,6 +208,7 @@ sub execute_start {
   my $opts = shift;
   my $task_name = shift;
   die "Task name must be specified." unless $task_name;
+  die "Too many arguments were passed." if @_;
 
   # Get start datetime
   my $start_utc = str2datetime($opts->{date});
@@ -230,6 +231,7 @@ sub inactivate_task {
   my $cmd = shift;
   my $opts = shift;
   my $task_name = shift;
+  die "Too many arguments were passed." if @_;
 
   # Get datetime
   my $when_utc = str2datetime($opts->{date});
@@ -271,6 +273,7 @@ sub execute_switch {
   my $opts = shift;
   my $task_name = shift;
   die "Task name must be specified." unless $task_name;
+  die "Too many arguments were passed." if @_;
 
   my $cmd =
     $opts->{suspend} ? 'suspend' :
@@ -329,6 +332,7 @@ sub execute_task {
     die "Task name must be specified." unless $task_name;
     die "Too long task name." if length $task_name > $TASKNAME_MAXLEN;
   }
+  die "Too many arguments were passed." if @_;
 
   if ($subcmd eq 'add') {
     # Add task
@@ -391,6 +395,7 @@ sub execute_db {
   if (not $subcmd or not contain ['setup', 'desc', 'dump', 'import'], $subcmd) {
     die "Unexpected args for 'db'";
   }
+  die "Too many arguments were passed." if @_;
 
   if ($subcmd eq 'setup') {
     # Setup DB

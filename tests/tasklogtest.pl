@@ -83,6 +83,9 @@ ok(scalar(grep { $_ eq '"main"."activities"' } @tables), "Table activities shoul
 ok(scalar(grep { $_ eq '"main"."tasks"' } @tables), "Table tasks should exist");
 ok(scalar(grep { $_ eq '"main"."config"' } @tables), "Table config should exist");
 
+eval { tasklog::execute_db({}, 'setup', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
+
 # Test execute_task()
 
 ## Test task add
@@ -119,7 +122,17 @@ like($@, qr/^Too long task name/, "Error message should be passed");
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks');
 is(scalar @$rows, 3, "# of tasks should not change");
 
+eval { tasklog::execute_task({}, 'add', 'testtask3', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks');
+is(scalar @$rows, 3, "# of tasks should not change");
+
 # Test execute_start()
+eval { tasklog::execute_start({}, 'testtask1', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
+is(scalar @$rows, 0, "Activity should not be added");
+
 eval { tasklog::execute_start({}, 'testtask99') };
 like($@, qr/^Task testtask99 not found/, "Error message should be passed");
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities');
@@ -164,6 +177,11 @@ like($@, qr/^Task testtask100 not found./, "Error message should be passed");
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities');
 is(scalar @$rows, 4, "Activity should not be added");
 
+eval { tasklog::execute_suspend({}, 'testtask1', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
+is(scalar @$rows, 4, "Activity should not be added");
+
 # Test execute_block()
 tasklog::execute_block({}, 'testtask2');
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities');
@@ -173,6 +191,9 @@ is($rows->[4][2], 3, "Should add block activity");
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
 is(scalar $rows->[0][1], 3, "State should be BLOCKED");
 
+eval { tasklog::execute_block({}, 'testtask1', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
+
 # Test execute_close()
 tasklog::execute_close({});
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities');
@@ -181,6 +202,9 @@ is($rows->[5][1], 'testtask1', "Should close active task");
 is($rows->[5][2], 4, "Should add close activity");
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"');
 is(scalar $rows->[0][1], 4, "State should be CLOSED");
+
+eval { tasklog::execute_close({}, 'testtask1', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
 
 # Test execute_switch()
 tasklog::execute_start({}, 'testtask1');
@@ -266,6 +290,13 @@ $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask1"')
 is($rows->[0][1], 2, "State of previous task should be SUSPENDED");
 $rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
 is($rows->[0][1], 1, "State of current task should be ACTIVE");
+
+eval { tasklog::execute_switch({}, 'testtask2', '2015-01-01_00:00:00') };
+like($@, qr/^Too many arguments were passed./, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities');
+is(scalar @$rows, 17, "New activity should not be added");
+$rows = $dbh->selectall_arrayref('SELECT * FROM tasks WHERE name = "testtask2"');
+is($rows->[0][1], 1, "State should not change");
 
 tasklog::execute_suspend({});
 eval { tasklog::execute_switch({}, 'testtask2') };
