@@ -367,6 +367,8 @@ sub execute_task {
       say "name\tstate\tcreated_at";
       say '-' x 79;
       while (my $row = $sth->fetchrow_hashref) {
+        next if stateid2str($row->{state}) eq 'CLOSED' && !$opts->{all};
+
         say sprintf "%s\t%s\t%s",
           $row->{name}, stateid2str($row->{state}),
           utc2localtime($row->{created_at});
@@ -483,6 +485,7 @@ sub main {
     block|b
     close|c
     date|d=s
+    all|a
   )) or die "Option parse error";
   @_ = @ARGV;
 
@@ -500,7 +503,9 @@ COMMANDS:
   (start | suspend | block | close) TASK
   switch (alias: s) TASK
   show
-  task ( (add | remove) TASK | list )
+  task (add | remove) TASK
+       list
+         --all -a        Lists all tasks including closed ones
   db (setup | desc | dump | import)
   help
 
