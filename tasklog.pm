@@ -377,6 +377,106 @@ sub execute_task {
   }
 }
 
+# Execute aggregate command
+sub execute_aggregate {
+  invoke_with_connection 'readonly', sub {
+    my $dbh = shift;
+
+    # $root = {
+    #   elapsed => {
+    #     active => Ta,       # Sum of active time of all child tasks
+    #     blocked => Tb,      # Sum of blocked time of all child tasks
+    #   },
+    #   children => {
+    #     TASK_1 => {
+    #       elapsed => ...
+    #       children => {
+    #         CHILD_TASK_1 => ...,
+    #         CHILD_TASK_2 => ...
+    #       }
+    #     },
+    #     TASK_2 => ...
+    #   }
+    # }
+    my $root = {
+      elapsed => {active => 0, blocked => 0},
+      children => {}
+    };
+
+    # Accumulate tasks
+    my $sth = $dbh->prepare('SELECT * FROM tasks');
+    $sth->execute;
+    sub set_tasks {
+      my ($t, $hie) = @_;
+      return unless @$hie;
+      $t->{children}{$hie->[0]} = {
+        children => {},
+        elapsed => {active => 0, blocked => 0}
+      } unless exists $t->{children}{$hie->[0]};
+      my @sub = @$hie[1..$#$hie];
+      set_tasks($t->{children}{$hie->[0]}, \@sub);
+    }
+    while (my $row = $sth->fetchrow_hashref) {
+      my @hie = split /\./, $row->{name};
+      set_tasks($root, \@hie);
+    }
+
+    # Aggregate elapsed time for each task
+    $sth = $dbh->prepare('SELECT * FROM activities ORDER BY task_name, id');
+    $sth->execute;
+    sub _set_elapsed {
+      my ($t, $hie, $ela, $state) = @_;
+      $t->{elapsed}{$state} += $ela;
+      return unless @$hie;
+      my @sub = @$hie[1..$#$hie];
+      _set_elapsed($t->{children}{$hie->[0]}, \@sub, $ela, $state);
+    }
+    sub set_elapsed {
+      my ($root, $row, $last, $strp) = @_;
+      my $action = actionid2str($last->{action});
+      if ($action eq 'start' or $action eq 'block') {
+        my @hie = split /\./, $last->{task_name};
+        my $last_utc = $strp->parse_datetime($last->{when_utc});
+        my $when_utc = $strp->parse_datetime($row->{when_utc});
+        my $elapsed = $when_utc->delta_ms($last_utc)->in_units('minutes');
+        $elapsed /= 60 * 7.5;
+        _set_elapsed $root, \@hie, $elapsed,
+          lc(stateid2str(action2stateid($action)));
+      }
+    }
+    my $last;
+    my $strp = DateTime::Format::Strptime->new(
+      pattern => $DATETIME_FORMAT, time_zone => 'UTC'
+    );
+    while (my $row = $sth->fetchrow_hashref) {
+      unless ($last) {
+        $last = $row;
+        next;
+      }
+
+      if ($last->{task_name} ne $row->{task_name}) {
+        set_elapsed $root, {when_utc => DateTime->now(
+          time_zone => 'UTC'
+        )->strftime($DATETIME_FORMAT)}, $last, $strp;
+      } else {
+        set_elapsed $root, $row, $last, $strp;
+      }
+      $last = $row;
+    }
+
+    # Display
+    sub display {
+      my ($t, $level) = @_;
+      say sprintf "active: %.1f, blocked: %.1f", $t->{elapsed}{active}, $t->{elapsed}{blocked};
+      foreach (keys %{$t->{children}}) {
+        print "\t" x $level . "$_: ";
+        display($t->{children}{$_}, $level + 1);
+      }
+    }
+    display $root, 0;
+  };
+}
+
 my @DB_DUMP_FORMATS = (
   {
     table => 'tasks',
@@ -492,7 +592,7 @@ sub main {
   # List of commands
   my @commands = (
     'start', 'suspend', 'block', 'close', 'switch', 's',
-    'show', 'task', 'db');
+    'show', 'task', 'aggregate', 'db');
 
   # Check user input command
   my $cmd = shift;
@@ -506,6 +606,7 @@ COMMANDS:
   task (add | remove) TASK
        list
          --all -a        Lists all tasks including closed ones
+  aggregate
   db (setup | desc | dump | import)
   help
 
@@ -526,6 +627,7 @@ EOS
   elsif ($cmd eq 'switch' or $cmd eq 's') { execute_switch(\%opts, @_); }
   elsif ($cmd eq 'show') { execute_show(\%opts, @_); }
   elsif ($cmd eq 'task') { execute_task(\%opts, @_); }
+  elsif ($cmd eq 'aggregate') { execute_aggregate(\%opts, @_); }
   elsif ($cmd eq 'db') { execute_db(\%opts, @_); }
   else { die "Unknown command: $cmd"; }
 
