@@ -190,6 +190,9 @@ sub record_activity {
   my $row = $dbh->selectrow_arrayref(
     'SELECT state FROM tasks WHERE name = ?', undef, $task_name);
   die "Unexpected task state." if $row->[0] == action2stateid($action);
+  $row = $dbh->selectrow_arrayref(
+    "SELECT COUNT(*) FROM activities WHERE when_utc > $when_utc");
+  die "Specified datetime is too old." if $row->[0] > 0;
 
   # Add activity
   my $sth = $dbh->prepare(

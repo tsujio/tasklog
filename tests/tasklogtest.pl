@@ -333,11 +333,19 @@ tasklog::execute_close({date => '2100-04-01_12:00:00'}, 'testtask1');
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY when_utc');
 is($rows->[-1][3], '2100-04-01 03:00:00', "Datetime should be specified one");
 
-tasklog::execute_start({}, 'testtask1');
+tasklog::execute_start({date => '2100-05-01_12:00:00'}, 'testtask1');
 tasklog::execute_switch({date => '2100-05-01_12:00:00'}, 'testtask2');
 $rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY when_utc');
 is($rows->[-1][3], '2100-05-01 03:00:00', "Datetime should be specified one");
 is($rows->[-2][3], '2100-05-01 03:00:00', "Datetime should be specified one");
+
+tasklog::execute_suspend({date => '2100-05-01_12:00:00'});
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY when_utc');
+is($rows->[-1][3], '2100-05-01 03:00:00', "Datetime should be specified one");
+
+eval { tasklog::execute_start({date => '2100-05-01_11:59:59'}, 'testtask1') };
+like($@, qr/^Specified datetime is too old/, "Error message should be passed");
+$rows = $dbh->selectall_arrayref('SELECT * FROM activities ORDER BY when_utc');
 
 # Clean up
 unlink tasklog::get_db_file_path;
