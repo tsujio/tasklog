@@ -605,6 +605,9 @@ sub main {
 COMMANDS:
   (start | suspend | block | close) TASK
   switch (alias: s) TASK
+    --suspend -s    Suspend current task
+    --block -b      Block current task
+    --close -c      Close current task
   show
   task (add | remove) TASK
        list
@@ -614,9 +617,6 @@ COMMANDS:
   help
 
 OPTIONS:
-  --suspend -s    Suspend current task (Used with the switch command)
-  --block -b      Block current task (Used with the switch command)
-  --close -c      Close current task (Used with the switch command)
   --date -d [yyyy-MM-dd_]hh:mm[:ss]
 EOS
     return 0;
