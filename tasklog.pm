@@ -471,7 +471,7 @@ sub execute_aggregate {
     sub display {
       my ($t, $level) = @_;
       say sprintf "active: %.1f, blocked: %.1f", $t->{elapsed}{active}, $t->{elapsed}{blocked};
-      foreach (keys %{$t->{children}}) {
+      foreach (sort keys %{$t->{children}}) {
         print "\t" x $level . "$_: ";
         display($t->{children}{$_}, $level + 1);
       }
