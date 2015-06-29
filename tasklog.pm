@@ -370,7 +370,11 @@ sub execute_task {
       say "name\tstate\tcreated_at";
       say '-' x 79;
       while (my $row = $sth->fetchrow_hashref) {
-        next if stateid2str($row->{state}) eq 'CLOSED' && !$opts->{all};
+        unless ($opts->{all}) {
+          next if stateid2str($row->{state}) eq 'CLOSED';
+          next if $row->{name} =~ /^misc(?:\..*)?$/ &&
+            stateid2str($row->{state}) ne 'ACTIVE';
+        }
 
         say sprintf "%s\t%s\t%s",
           $row->{name}, stateid2str($row->{state}),
